@@ -9,7 +9,7 @@ import akka.stream._
 import akka.stream.scaladsl._
 
 import scala.concurrent.duration._
-import scala.concurrent.Await
+import scala.concurrent.{Await, Future}
 import scala.io.StdIn
 
 object Server {
@@ -17,41 +17,26 @@ object Server {
     implicit val system = ActorSystem()
     implicit val materializer = ActorMaterializer()
 
-    val chatRoom = system.actorOf(Props(new ChatRoom), "chat")
+    // chat room many clients -> merge hub -> broadcasthub -> many clients
+    val (chatSink, chatSource) =
+      MergeHub.source[String].toMat(BroadcastHub.sink[String])(Keep.both).run()
 
-    def newUser(): Flow[Message, Message, NotUsed] = {
-      // new connection - new user actor
-      val userActor = system.actorOf(Props(new User(chatRoom)))
-
-      val incomingMessages: Sink[Message, NotUsed] =
-        Flow[Message].map {
-          // transform websocket message to domain message
-          case TextMessage.Strict(text) => User.IncomingMessage(text)
-        }.to(Sink.actorRef[User.IncomingMessage](userActor, PoisonPill))
-
-      val outgoingMessages: Source[Message, NotUsed] =
-        Source.actorRef[User.OutgoingMessage](10, OverflowStrategy.fail)
-        .mapMaterializedValue { outActor =>
-          // give the user actor a way to send messages out
-          userActor ! User.Connected(outActor)
-          NotUsed
-        }.map(
-          // transform domain message to web socket message
-          (outMsg: User.OutgoingMessage) => TextMessage(outMsg.text))
-
-      // then combine both to a flow
-      Flow.fromSinkAndSource(incomingMessages, outgoingMessages)
-    }
+    val userFlow: Flow[Message, Message, NotUsed] =
+      Flow[Message].mapAsync(1) {
+        // transform websocket message to domain message (string)
+        case TextMessage.Strict(text) =>       Future.successful(text)
+        case streamed: TextMessage.Streamed => streamed.textStream.runFold("")(_ ++ _)
+      }.via(Flow.fromSinkAndSource(chatSink, chatSource))
+       .map[Message](string => TextMessage(string))
 
     val route =
       path("chat") {
         get {
-          handleWebSocketMessages(newUser())
+          handleWebSocketMessages(userFlow)
         }
       }
 
     val binding = Await.result(Http().bindAndHandle(route, "127.0.0.1", 8080), 3.seconds)
-
 
     // the rest of the sample code will go here
     println("Started server at 127.0.0.1:8080, press enter to kill server")
