@@ -1,31 +1,39 @@
 package chat
 
-import akka.actor.{Actor, ActorRef}
+import akka.actor.typed.ActorRef
+import akka.actor.typed.Behavior
+import akka.actor.typed.scaladsl.Behaviors
 
 object User {
-  case class Connected(outgoing: ActorRef)
-  case class IncomingMessage(text: String)
-  case class OutgoingMessage(text: String)
-}
+  sealed trait Event
+  case class Connected(outgoing: ActorRef[OutgoingMessage]) extends Event
+  case object Disconnected extends Event
+  case class IncomingMessage(text: String) extends Event
+  case class OutgoingMessage(text: String) extends Event
 
-class User(chatRoom: ActorRef) extends Actor {
-  import User._
+  def apply(chatRoom: ActorRef[ChatRoom.Command]): Behavior[Event] =
+      waitingForConnection(chatRoom)
 
-  def receive = {
-    case Connected(outgoing) =>
-      context.become(connected(outgoing))
-  }
+    private def waitingForConnection(chatRoom: ActorRef[ChatRoom.Command]): Behavior[Event] =
+      Behaviors.setup { context =>
+        Behaviors.receiveMessagePartial {
+          case Connected(outgoing) =>
+            chatRoom ! ChatRoom.Join(context.messageAdapter {
+              case ChatRoom.ChatMessage(text) => OutgoingMessage(text)
+            })
+            connected(chatRoom, outgoing)
+        }
+      }
 
-  def connected(outgoing: ActorRef): Receive = {
-    chatRoom ! ChatRoom.Join
-
-    {
+  private def connected(chatRoom: ActorRef[ChatRoom.Command], outgoing: ActorRef[OutgoingMessage]): Behavior[Event] =
+    Behaviors.receiveMessagePartial {
       case IncomingMessage(text) =>
         chatRoom ! ChatRoom.ChatMessage(text)
-
-      case ChatRoom.ChatMessage(text) =>
-        outgoing ! OutgoingMessage(text)
+        Behaviors.same
+      case msg: OutgoingMessage =>
+        outgoing ! msg
+        Behaviors.same
+      case Disconnected =>
+        Behaviors.stopped
     }
-  }
-
 }

@@ -1,6 +1,10 @@
-scalaVersion := "2.11.8"
+scalaVersion := "2.13.1"
+
+val AkkaVersion = "2.6.3"
 
 libraryDependencies ++= Seq(
-  "com.typesafe.akka" %% "akka-http-core" % "2.4.4",
-  "com.typesafe.akka" %% "akka-http-experimental" % "2.4.4"
+  "com.typesafe.akka" %% "akka-http" % "10.1.11",
+  "com.typesafe.akka" %% "akka-actor-typed" % AkkaVersion,
+  "com.typesafe.akka" %% "akka-stream" % AkkaVersion,
+  "com.typesafe.akka" %% "akka-stream-typed" % AkkaVersion
 )

@@ -1,26 +1,30 @@
 package chat
 
-import akka.actor._
+import akka.actor.typed.ActorRef
+import akka.actor.typed.Behavior
+import akka.actor.typed.Terminated
+import akka.actor.typed.scaladsl.Behaviors
 
 object ChatRoom {
-  case object Join
-  case class ChatMessage(message: String)
-}
+  sealed trait Command
+  case class Join(user: ActorRef[ChatMessage]) extends Command
+  case class ChatMessage(message: String) extends Command
 
-class ChatRoom extends Actor {
-  import ChatRoom._
-  var users: Set[ActorRef] = Set.empty
+  def apply(): Behavior[Command] = run(Set.empty)
 
-  def receive = {
-    case Join =>
-      users += sender()
-      // we also would like to remove the user when its actor is stopped
-      context.watch(sender())
-
-    case Terminated(user) =>
-      users -= user
-
-    case msg: ChatMessage =>
-      users.foreach(_ ! msg)
-  }
+  private def run(users: Set[ActorRef[ChatMessage]]): Behavior[Command] =
+    Behaviors.setup { context =>
+      Behaviors.receiveMessage[Command] {
+        case Join(user) =>
+          // watch so we can remove the user when if actor is stopped
+          context.watch(user)
+          run(users + user)
+        case msg: ChatMessage =>
+          users.foreach(_ ! msg)
+          Behaviors.same
+      }.receiveSignal {
+        case (__, Terminated(user)) =>
+          run(users.filterNot(_ == user))
+      }
+    }
 }
